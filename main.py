@@ -19,6 +19,14 @@ from pydantic import BaseModel
 from PIL import Image
 import pytesseract
 
+from ocr_pipeline import (
+    init_engine,
+    get_engine,
+    extract_marksheet_fields,
+    normalize_for_search,
+    OCR_MIN_CONF,
+)
+
 try:
     from pdf2image import convert_from_bytes
 except ImportError:
@@ -53,6 +61,13 @@ TESSERACT_PATH = _find_tesseract()
 if TESSERACT_PATH:
     pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
 
+# Main external libraries used in this API:
+# - FastAPI/Uvicorn: HTTP API server.
+# - InsightFace + ONNX Runtime: local face detection/verification model.
+# - PaddleOCR: primary free/self-hosted OCR engine for marksheets.
+# - Tesseract + pytesseract: fallback OCR engine.
+# - OpenCV/Pillow/PyMuPDF/pdf2image/python-docx: file decoding and preprocessing.
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -77,6 +92,8 @@ ocr_ready: bool = False
 async def lifespan(app: FastAPI):
     global face_app, ocr_ready
     try:
+        # InsightFace downloads/uses the "buffalo_l" face model pack.
+        # This is only for /verify and /verify-json; OCR does not use this model.
         face_app = FaceAnalysis(name="buffalo_l")
         face_app.prepare(ctx_id=0, det_size=(640, 640))
         logger.info("✓ InsightFace model initialized (buffalo_l)")
@@ -84,17 +101,19 @@ async def lifespan(app: FastAPI):
         logger.error("✗ Failed to initialize InsightFace: %s", e)
         raise
     
-    if TESSERACT_PATH:
-        try:
-            _ = pytesseract.get_tesseract_version()
+    try:
+        # OCR engine selection lives in ocr_pipeline.py:
+        # primary = PaddleOCR, fallback = Tesseract if Paddle is unavailable/fails.
+        active = init_engine()
+        if active:
             ocr_ready = True
-            logger.info("✓ Tesseract OCR available")
-        except Exception as _e:
+            logger.info("\u2713 OCR engine ready (active=%s)", active)
+        else:
             ocr_ready = False
-            logger.warning("✗ Tesseract OCR not available: %s. OCR endpoints will return 503.", _e)
-    else:
+            logger.warning("\u2717 No OCR engine available. OCR endpoints will return 503.")
+    except Exception as _e:
         ocr_ready = False
-        logger.warning("✗ Tesseract not found. OCR endpoints will return 503.")
+        logger.warning("\u2717 OCR engine init failed: %s. OCR endpoints will return 503.", _e)
     
     logger.info(f"Server starting on port {PORT} with {WORKERS} workers")
     yield
@@ -263,40 +282,10 @@ def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 def _extract_text_with_confidence(img: np.ndarray, lang: str = "eng") -> tuple[str, float]:
     if _is_blank_image(img):
         return "", 0.0
-    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    pil_img = Image.fromarray(rgb)
-    data = pytesseract.image_to_data(
-        pil_img,
-        lang=lang,
-        config="--oem 3 --psm 6",
-        output_type=pytesseract.Output.DICT,
-    )
-    lines = []
-    current_line = []
-    current_line_num = None
-    for i, line_num in enumerate(data.get("line_num", [])):
-        if current_line_num is None:
-            current_line_num = line_num
-        if line_num != current_line_num:
-            lines.append(" ".join(current_line))
-            current_line = []
-            current_line_num = line_num
-        word = str(data.get("text", [])[i]).strip()
-        if word:
-            current_line.append(word)
-    if current_line:
-        lines.append(" ".join(current_line))
-    text = "\n".join(lines).strip()
-
-    confidences = []
-    for conf in data.get("conf", []):
-        try:
-            c = float(conf)
-            if c >= 0:
-                confidences.append(c)
-        except (ValueError, TypeError):
-            continue
-    avg_conf = float(sum(confidences)) / len(confidences) if confidences else 0.0
+    engine = get_engine()
+    if engine is None or not engine.ready():
+        return "", 0.0
+    text, avg_conf, _lines = engine.extract(img)
     return text or "", avg_conf
 
 
@@ -442,7 +431,15 @@ def _doc_heuristics(
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "name": app.title, "version": app.version, "ocr_ready": bool(ocr_ready)}
+    engine = get_engine()
+    return {
+        "status": "ok",
+        "name": app.title,
+        "version": app.version,
+        "ocr_ready": bool(ocr_ready),
+        "ocr_engine": (engine.active if engine else None),
+        "ocr_engine_info": (engine.info() if engine else None),
+    }
 
 
 @app.post("/verify")
@@ -499,7 +496,16 @@ async def ocr_form(
             min_words=min_words,
             avg_conf=avg_conf,
         )
-        resp = {"ok": True, **heur}
+        engine = get_engine()
+        resp = {
+            "ok": True,
+            "engine": (engine.last_used if engine else None),
+            "engine_info": (engine.info() if engine else None),
+            "low_quality": bool(avg_conf < OCR_MIN_CONF),
+            "fields": extract_marksheet_fields(text),
+            "search_text": normalize_for_search(text),
+            **heur,
+        }
         if return_text:
             resp["text"] = text
         return resp
@@ -528,7 +534,16 @@ async def ocr_json(payload: OCRJSONRequest):
             min_words=payload.min_words,
             avg_conf=avg_conf,
         )
-        resp = {"ok": True, **heur}
+        engine = get_engine()
+        resp = {
+            "ok": True,
+            "engine": (engine.last_used if engine else None),
+            "engine_info": (engine.info() if engine else None),
+            "low_quality": bool(avg_conf < OCR_MIN_CONF),
+            "fields": extract_marksheet_fields(text),
+            "search_text": normalize_for_search(text),
+            **heur,
+        }
         if payload.return_text:
             resp["text"] = text
         return resp

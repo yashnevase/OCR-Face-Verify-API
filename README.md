@@ -2,6 +2,31 @@
 
 Simple, free, self-hosted face verification and document OCR API. No third-party APIs, no data leaves your server.
 
+🚀 Production Deploy (on your x86 Linux server)
+# 1. SSH into server and pull latest code
+git pull origin main
+
+# 2. Copy env file (first time only)
+cp .env.example .env
+# Edit .env if needed — defaults are already correct for production
+
+# 3. Build the image (models pre-cached during build)
+docker build -t ocr-api .
+
+# 4. Run (replaces any existing container)
+docker stop ocr-api 2>/dev/null; docker rm ocr-api 2>/dev/null
+docker run -d \
+  --restart=always \
+  -p 8000:8000 \
+  --env-file .env \
+  --name ocr-api \
+  ocr-api
+
+# 5. Verify
+curl http://localhost:8000/health
+
+docker restart ocr-api
+
 ## APIs (3 Endpoints)
 
 ### 1. `GET /health`

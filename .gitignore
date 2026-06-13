@@ -1,0 +1,66 @@
+# Virtual environments and installed dependencies
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache/build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+*.egg
+pip-wheel-metadata/
+share/python-wheels/
+
+# Test, coverage, and type-checker cache
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.mypy_cache/
+.pyre/
+
+# Local environment/secrets
+.env
+.env.local
+.env.*.local
+
+# IDE/editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Runtime/model downloads (large, rebuilt/downloaded on server)
+models/
+.insightface/
+.paddleocr/
+*.onnx
+
+# Logs/temp files
+logs/
+*.log
+tmp/
+temp/
+*.tmp
+
+# Local databases/notebooks
+db.sqlite3
+db.sqlite3-journal
+.ipynb_checkpoints/

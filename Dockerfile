@@ -1,58 +1,73 @@
-FROM python:3.11-slim
+# ── Production image ─────────────────────────────────────────────────────────
+# Target: x86_64 Linux (VPS / cloud).  PaddleOCR runs fast here with MKL-DNN.
+# To build locally on an Apple Silicon Mac add --platform=linux/amd64.
+# ─────────────────────────────────────────────────────────────────────────────
+FROM --platform=linux/amd64 python:3.10-slim
 
-# Prevent Python from writing .pyc files and enable unbuffered logs
+# ── Runtime env defaults (all overridable at container start with -e) ─────────
+# OCR_ENGINE=paddle   → PaddleOCR primary, Tesseract fallback
+# OCR_ENGINE=tesseract → Tesseract only (set this to skip Paddle)
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HOME=/app \
     PORT=8000 \
     WORKERS=4 \
-    CORS_ORIGINS="*"
+    CORS_ORIGINS="*" \
+    OCR_ENGINE=paddle \
+    OCR_LANG=devanagari \
+    TESS_LANG=eng+hin+mar \
+    OCR_PREPROCESS=1 \
+    OCR_PREPROCESS_FAST=1 \
+    OCR_MIN_CONF=45 \
+    PADDLE_ENABLE_MKLDNN=1 \
+    PADDLE_CPU_THREADS=4 \
+    PADDLE_DET_LIMIT_SIDE_LEN=960
 
 WORKDIR /app
 
-# Copy requirements first for caching
+# ── System dependencies ───────────────────────────────────────────────────────
+# libgomp1      – required by PaddleOCR CPU runtime
+# tesseract-*   – Tesseract fallback with Hindi + Marathi language packs
+# poppler-utils – PDF page rendering (pdf2image / PyMuPDF backup)
+# ─────────────────────────────────────────────────────────────────────────────
 COPY requirements.txt /app/
 
-# Install system deps (including Tesseract and Poppler) and Python deps,
-# then purge build tools to keep image small.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        build-essential \
-        libgl1 \
-        libglib2.0-0 \
-        libsm6 \
-        libxext6 \
-        libxrender1 \
-        tesseract-ocr \
-        poppler-utils \
-        curl \
-        ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libgomp1 \
+        tesseract-ocr tesseract-ocr-eng tesseract-ocr-hin tesseract-ocr-mar \
+        poppler-utils curl ca-certificates \
     && pip install --no-cache-dir -r requirements.txt \
-    && apt-get purge -y --auto-remove build-essential \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* /root/.cache/pip
 
-# Copy application files
+# ── Application code ──────────────────────────────────────────────────────────
 COPY . /app/
 
-# Create an unprivileged user and ensure /app is owned by it
+# ── Non-root user ─────────────────────────────────────────────────────────────
 RUN useradd -m -d /home/appuser -s /bin/bash appuser \
     && chown -R appuser:appuser /app
 
-# Cache InsightFace models at build time to avoid runtime cold-starts.
-# If this step fails, the build will continue (models will be downloaded at runtime).
-RUN python -c "from insightface.app import FaceAnalysis; a=FaceAnalysis(name='buffalo_l'); a.prepare(ctx_id=0, det_size=(640,640)); print('Models cached')" || echo "Model caching failed, continuing..."
+# ── Pre-cache models at build time (avoids cold-start download on first request)
+# InsightFace (face verification)
+RUN python -c "\
+from insightface.app import FaceAnalysis; \
+a = FaceAnalysis(name='buffalo_l'); \
+a.prepare(ctx_id=0, det_size=(640,640)); \
+print('InsightFace models cached')" \
+    || echo "InsightFace cache failed – will download at runtime"
 
-# Ensure app files are owned by the runtime user
+# PaddleOCR – devanagari detection + recognition models
+RUN python -c "\
+from paddleocr import PaddleOCR; \
+PaddleOCR(use_angle_cls=False, lang='devanagari', show_log=False, use_gpu=False); \
+print('PaddleOCR devanagari models cached')" \
+    || echo "PaddleOCR cache failed – will download at runtime"
+
 RUN chown -R appuser:appuser /app
-
-# Switch to non-root user
 USER appuser
 
 EXPOSE 8000
 
-# Basic healthcheck against the /health endpoint
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:${PORT}/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:${PORT}/health || exit 1
 
-# Run Uvicorn with environment variables
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--workers", "4"]
+CMD uvicorn main:app --host 0.0.0.0 --port "$PORT" --proxy-headers --workers "$WORKERS"
