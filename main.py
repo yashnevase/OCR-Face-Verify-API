@@ -18,6 +18,9 @@ from insightface.app import FaceAnalysis
 from pydantic import BaseModel
 from PIL import Image
 import pytesseract
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from ocr_pipeline import (
     init_engine,
@@ -25,6 +28,7 @@ from ocr_pipeline import (
     extract_marksheet_fields,
     normalize_for_search,
     OCR_MIN_CONF,
+    OCR_REQUIRE_PADDLE,
 )
 
 try:
@@ -44,7 +48,7 @@ except ImportError:
 
 # Auto-detect Tesseract path (cross-platform: Windows, Linux, macOS)
 def _find_tesseract():
-    # Try PATH first (works on Linux, Docker, macOS with Homebrew)
+    # Try PATH first (works on Linux and macOS with Homebrew)
     if shutil.which("tesseract"):
         return shutil.which("tesseract")
     # Windows default location
@@ -77,7 +81,7 @@ logger = logging.getLogger("uvicorn.error")
 
 # Configuration from environment variables
 PORT = int(os.getenv("PORT", "8000"))
-WORKERS = int(os.getenv("WORKERS", "4"))
+WORKERS = int(os.getenv("WORKERS", "1"))
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
 if CORS_ORIGINS == ["*"]:
     CORS_ORIGINS = ["*"]
@@ -113,7 +117,9 @@ async def lifespan(app: FastAPI):
             logger.warning("\u2717 No OCR engine available. OCR endpoints will return 503.")
     except Exception as _e:
         ocr_ready = False
-        logger.warning("\u2717 OCR engine init failed: %s. OCR endpoints will return 503.", _e)
+        logger.error("\u2717 OCR engine init failed: %s", _e)
+        if OCR_REQUIRE_PADDLE:
+            raise RuntimeError("Required PaddleOCR engine failed to initialize") from _e
     
     logger.info(f"Server starting on port {PORT} with {WORKERS} workers")
     yield

@@ -38,6 +38,7 @@ except Exception:
 # Configuration — all tunable via environment variables
 # ---------------------------------------------------------------------------
 OCR_ENGINE   = os.getenv("OCR_ENGINE",   "paddle").lower()   # paddle | tesseract
+OCR_REQUIRE_PADDLE = os.getenv("OCR_REQUIRE_PADDLE", "1") == "1"
 OCR_LANG     = os.getenv("OCR_LANG",     "devanagari")        # paddle lang model
 TESS_LANG    = os.getenv("TESS_LANG",    "eng+hin+mar")       # tesseract lang packs
 OCR_PREPROCESS      = os.getenv("OCR_PREPROCESS",      "1") == "1"
@@ -178,6 +179,11 @@ class OCREngine:
 
         if self.active is None and self.tesseract_ok:
             self.active = "tesseract"
+        if OCR_REQUIRE_PADDLE and self.active != "paddle":
+            raise RuntimeError(
+                "PaddleOCR is required but failed to initialize. "
+                "Check the paddlepaddle/paddleocr installation and model download access."
+            )
         if self.active is None:
             logger.error("No OCR engine available — check PaddleOCR / Tesseract install")
         else:
@@ -190,6 +196,7 @@ class OCREngine:
     def info(self) -> dict:
         return {
             "requested_engine":            OCR_ENGINE,
+            "paddle_required":             OCR_REQUIRE_PADDLE,
             "active_engine":               self.active,
             "last_used_engine":            self.last_used,
             "fallback_engine":             "tesseract" if self.tesseract_ok else None,

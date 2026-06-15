@@ -3,6 +3,7 @@ fastapi==0.110.0
 uvicorn[standard]==0.29.0
 pydantic==2.6.4
 python-multipart==0.0.20
+python-dotenv==1.0.1
 
 # Face verification
 insightface==0.7.3

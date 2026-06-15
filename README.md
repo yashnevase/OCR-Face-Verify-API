@@ -2,30 +2,9 @@
 
 Simple, free, self-hosted face verification and document OCR API. No third-party APIs, no data leaves your server.
 
-🚀 Production Deploy (on your x86 Linux server)
-# 1. SSH into server and pull latest code
-git pull origin main
+## Production Deployment
 
-# 2. Copy env file (first time only)
-cp .env.example .env
-# Edit .env if needed — defaults are already correct for production
-
-# 3. Build the image (models pre-cached during build)
-docker build -t ocr-api .
-
-# 4. Run (replaces any existing container)
-docker stop ocr-api 2>/dev/null; docker rm ocr-api 2>/dev/null
-docker run -d \
-  --restart=always \
-  -p 8000:8000 \
-  --env-file .env \
-  --name ocr-api \
-  ocr-api
-
-# 5. Verify
-curl http://localhost:8000/health
-
-docker restart ocr-api
+Use the direct Python and systemd instructions in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## APIs (3 Endpoints)
 
@@ -194,22 +173,6 @@ curl http://localhost:8000/health
 
 ---
 
-## Deploy with Docker
-
-### Build and run locally
-```bash
-docker build -t face-verify-api .
-docker run -p 8000:8000 face-verify-api
-```
-
-### Deploy to cloud (Render/Railway/Fly.io)
-1. Push code to GitHub
-2. Connect to Render/Railway/Fly
-3. They auto-build from Dockerfile
-4. Expose port 8000
-
----
-
 ## What We Built
 
 ### Face Verification (`/verify`, `/verify-json`)
@@ -337,7 +300,7 @@ docker run -p 8000:8000 face-verify-api
 face detection/
 ├── main.py           # API code (all 5 endpoints)
 ├── requirements.txt  # Python dependencies
-├── Dockerfile      # Deployment config
+├── DEPLOYMENT.md   # Production deployment guide
 └── venv/           # Virtual environment (not committed)
 ```
 

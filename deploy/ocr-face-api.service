@@ -1,0 +1,18 @@
+[Unit]
+Description=OCR and Face Verify API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ocr-api
+Group=ocr-api
+WorkingDirectory=/opt/OCR-Face-Verify-API
+EnvironmentFile=/opt/OCR-Face-Verify-API/.env
+ExecStart=/opt/OCR-Face-Verify-API/deploy/start.sh
+Restart=always
+RestartSec=5
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target
